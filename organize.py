@@ -143,7 +143,11 @@ def extract_date_from_filename(name: str):
 # ── Folder normalization ──────────────────────────────────────────────────
 
 def normalize_subfolders(paths):
-    """Normalize subfolder names: Pics→images, Vids→videos, etc."""
+    """Normalize subfolder names: Pics→images, Vids→videos, etc.
+
+    Optimized: uses os.rename (atomic same-volume), os.scandir (fast listing),
+    and pre-collects existing names to avoid per-file exists() over SMB.
+    """
     MAPPINGS = {
         "pics": "images", "image": "images", "img": "images",
         "pictures": "images", "picture": "images",
@@ -156,12 +160,18 @@ def normalize_subfolders(paths):
         if not base.exists() or not base.is_dir():
             continue
 
-        for entry in list(base.iterdir()):
-            if not entry.is_dir():
-                continue
+        # Use os.scandir for fast directory listing (one SMB call)
+        try:
+            entries = [(e.name, e.path, e.is_dir(follow_symlinks=False))
+                       for e in os.scandir(str(base))]
+        except Exception:
+            continue
 
-            desired = MAPPINGS.get(entry.name.lower(), entry.name.lower())
-            if entry.name == desired:
+        dirs = [(name, path) for name, path, is_dir in entries if is_dir]
+
+        for dir_name, dir_path in dirs:
+            desired = MAPPINGS.get(dir_name.lower(), dir_name.lower())
+            if dir_name == desired:
                 continue
 
             target = base / desired
@@ -169,35 +179,61 @@ def normalize_subfolders(paths):
             try:
                 if target.exists():
                     try:
-                        st_e = entry.stat()
+                        st_e = os.stat(dir_path)
                         st_t = target.stat()
                         if st_e.st_ino == st_t.st_ino and st_e.st_dev == st_t.st_dev:
                             import uuid
                             tmp = base / (desired + "_" + uuid.uuid4().hex)
-                            entry.rename(tmp)
-                            tmp.rename(target)
+                            os.rename(dir_path, str(tmp))
+                            os.rename(str(tmp), str(target))
                             continue
                     except Exception:
                         pass
 
                 if target.exists():
+                    # Merge: collect existing names in target ONCE (avoid per-file exists())
                     target.mkdir(exist_ok=True)
-                    for child in list(entry.iterdir()):
-                        dest = target / child.name
-                        if dest.exists():
-                            stem, suffix, counter = child.stem, child.suffix, 1
-                            new_dest = target / f"{stem}_{counter}{suffix}"
-                            while new_dest.exists():
-                                counter += 1
-                                new_dest = target / f"{stem}_{counter}{suffix}"
-                            dest = new_dest
-                        shutil.move(str(child), str(dest))
                     try:
-                        entry.rmdir()
+                        existing_names = set(e.name for e in os.scandir(str(target)))
+                    except Exception:
+                        existing_names = set()
+
+                    # Collect children via os.scandir (one SMB call)
+                    try:
+                        children = [(e.name, e.path) for e in os.scandir(dir_path)]
+                    except Exception:
+                        children = []
+
+                    merge_count = len(children)
+                    if merge_count > 50:
+                        print(f"    merging {merge_count} items from {dir_name}/ → {desired}/...", flush=True)
+
+                    for i, (child_name, child_path) in enumerate(children):
+                        dest_name = child_name
+                        if dest_name in existing_names:
+                            stem = Path(child_name).stem
+                            suffix = Path(child_name).suffix
+                            counter = 1
+                            dest_name = f"{stem}_{counter}{suffix}"
+                            while dest_name in existing_names:
+                                counter += 1
+                                dest_name = f"{stem}_{counter}{suffix}"
+
+                        dest = str(target / dest_name)
+                        try:
+                            os.rename(child_path, dest)
+                        except OSError:
+                            # Cross-device fallback (shouldn't happen on same volume)
+                            shutil.move(child_path, dest)
+                        existing_names.add(dest_name)
+
+                    try:
+                        os.rmdir(dir_path)
                     except Exception:
                         pass
                 else:
-                    entry.rename(target)
+                    # Simple rename — single atomic op
+                    os.rename(dir_path, str(target))
             except Exception:
                 continue
 
