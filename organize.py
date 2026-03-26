@@ -16,7 +16,6 @@ _RE_DATE_FULL    = re.compile(r"(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})")
 _RE_DATE_SEMI    = re.compile(r"(\d{4})-(\d{2})-(\d{2})T(\d{2});(\d{2});(\d{2})")
 _RE_DATE_DASH    = re.compile(r"(\d{4})-(\d{2})-(\d{2})")
 _RE_DATE_DOT     = re.compile(r"(\d{4})\.(\d{2})\.(\d{2})")
-_RE_DATE_COMPACT = re.compile(r"(?<!\d)(\d{4})(\d{2})(\d{2})(?!\d)")
 
 # macOS creation-date setter via setattrlist syscall (replaces SetFile subprocess)
 try:
@@ -298,7 +297,6 @@ def extract_date_from_filename(name: str):
     2. YYYY-MM-DDTHH;MM;SS (e.g. 2024-02-26T13;45;01)
     3. YYYY-MM-DD
     4. YYYY.MM.DD
-    5. YYYYMMDD
 
     Returns a timezone-naive datetime or None.
     """
@@ -331,15 +329,6 @@ def extract_date_from_filename(name: str):
 
     # Pattern 3: YYYY.MM.DD
     m = _RE_DATE_DOT.search(name)
-    if m:
-        y,mo,d = map(int, m.groups())
-        try:
-            return datetime.datetime(y,mo,d,0,0,0)
-        except Exception:
-            return None
-
-    # Pattern 4: YYYYMMDD (ensure not part of longer run handled above)
-    m = _RE_DATE_COMPACT.search(name)
     if m:
         y,mo,d = map(int, m.groups())
         try:
