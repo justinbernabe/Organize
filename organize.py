@@ -488,66 +488,20 @@ def organize_files(file_list, root_path=None, progress_callback=None):
                 created_folders.add(str(dest_folder))
             dest_path = dest_folder / item.name
 
-            # If a file with the same name already exists, perform a
-            # duplicate check (size + SHA1). If it's a true duplicate,
-            # move the source into a top-level `DUPES` folder under the
-            # processed root instead of creating nested or suffixed copies.
+            # If a file with the same name already exists, use suffix-based
+            # renaming to avoid overwriting. Duplicate detection is disabled.
             if dest_path.exists():
                 try:
-                    # If they are the same underlying file (same inode),
-                    # treat as already handled and skip moving.
+                    # If they are the same underlying file (same inode), skip.
                     st_item = item.stat()
                     st_dest = dest_path.stat()
                     if (st_item.st_ino == st_dest.st_ino and
                             st_item.st_dev == st_dest.st_dev):
-                        if os.environ.get('ORGANIZE_DEBUG'):
-                            print(f"[DEBUG] source and dest are same inode {item}")
                         success_count += 1
                         continue
                 except Exception:
                     pass
 
-                # Compute SHA1 hashes for a stronger duplicate check
-                h_src = _sha1(item)
-                h_dst = _sha1(dest_path)
-                if h_src is not None and h_dst is not None and h_src == h_dst:
-                    # True duplicate — the NEWEST file goes to DUPES; the
-                    # older one stays in its organized location.
-                    target_root = root_dir if root_dir is not None else base_dir
-                    dupes_dir = Path(target_root) / 'DUPES'
-                    dupes_dir.mkdir(exist_ok=True)
-
-                    try:
-                        src_mtime = item.stat().st_mtime
-                        dst_mtime = dest_path.stat().st_mtime
-                    except Exception:
-                        src_mtime = dst_mtime = 0
-
-                    if src_mtime >= dst_mtime:
-                        # incoming file is newer (or same age) — it goes to DUPES
-                        dup_file = item
-                    else:
-                        # existing dest is newer — swap: move dest to DUPES,
-                        # then let item take the destination slot below
-                        dup_file = dest_path
-
-                    dup_target = dupes_dir / dup_file.name
-                    counter = 1
-                    while dup_target.exists():
-                        dup_target = dupes_dir / f"{dup_file.stem}_{counter}{dup_file.suffix}"
-                        counter += 1
-                    if os.environ.get('ORGANIZE_DEBUG'):
-                        print(f"[DEBUG] moving duplicate {dup_file} -> {dup_target}")
-                    shutil.move(str(dup_file), str(dup_target))
-
-                    if dup_file == item:
-                        # source was the dup — nothing left to move
-                        success_count += 1
-                        continue
-                    # dest was the dup — dest_path is now free, fall through
-                    # to the normal shutil.move below
-
-                # Not a duplicate — fall back to suffix-based duplicate protection
                 stem, suffix, counter = item.stem, item.suffix, 1
                 while dest_path.exists():
                     dest_path = dest_folder / f"{stem}_{counter}{suffix}"
@@ -861,20 +815,19 @@ def organize_folder(root_path, notify=True, _processed_roots=None):
 
     ticker = _Ticker(interval=5.0)
 
-    # Step 2 — fast global duplicate scan across ALL files under root.
-    # Runs before organizing so we never waste time sorting files that will
-    # be removed as duplicates. Coomer copies are immune (source of truth).
-    try:
-        print("  ► Scanning for duplicates...", flush=True)
-        dupes_moved = find_and_remove_duplicates(root, ticker=ticker)
-        if dupes_moved:
-            print(f"  ✓ Moved {dupes_moved} duplicate{'s' if dupes_moved != 1 else ''} to DUPES/", flush=True)
-        else:
-            print("  ✓ No duplicates found.", flush=True)
-    except Exception as _dedup_err:
-        print(f"  ✗ Duplicate scan error: {_dedup_err}", flush=True)
+    # Step 2 — duplicate scan DISABLED for speed.
+    # To re-enable, uncomment the block below.
+    # try:
+    #     print("  ► Scanning for duplicates...", flush=True)
+    #     dupes_moved = find_and_remove_duplicates(root, ticker=ticker)
+    #     if dupes_moved:
+    #         print(f"  ✓ Moved {dupes_moved} duplicate{'s' if dupes_moved != 1 else ''} to DUPES/", flush=True)
+    #     else:
+    #         print("  ✓ No duplicates found.", flush=True)
+    # except Exception as _dedup_err:
+    #     print(f"  ✗ Duplicate scan error: {_dedup_err}", flush=True)
 
-    # Step 3 — scan for files to move (post-dedup, clean set only)
+    # Step 3 — scan for files to move
     print("  ► Scanning for files...", flush=True)
     files_to_sort = get_items([root])
     total_files = len(files_to_sort)
