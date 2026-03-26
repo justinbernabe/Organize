@@ -1,0 +1,14 @@
+[Unit]
+Description=File Organizer Web App
+After=network.target
+
+[Service]
+ExecStart=/usr/bin/python3 /opt/file-organizer/server.py
+WorkingDirectory=/opt/file-organizer
+Restart=always
+RestartSec=5
+User=nobody
+Environment=PORT=8080
+
+[Install]
+WantedBy=multi-user.target
