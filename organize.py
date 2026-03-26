@@ -678,13 +678,15 @@ class _Tee:
 
 
 def _open_log_terminal(log_path: str):
-    """Open a Terminal window that live-tails the log file."""
+    """Open a Terminal window that live-tails the log and auto-closes when done."""
     try:
         safe = shlex.quote(log_path)
         applescript = (
             'tell application "Terminal"\n'
             '    activate\n'
-            f'    do script "echo \'organize.py — live log\'; tail -f {safe}"\n'
+            f'    do script "tail -f {safe} & TAIL=$!; '
+            f'while ! grep -q Done {safe} 2>/dev/null; do sleep 1; done; '
+            f'sleep 4; kill $TAIL 2>/dev/null; exit"\n'
             'end tell'
         )
         subprocess.Popen(
